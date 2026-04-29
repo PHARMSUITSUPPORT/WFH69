@@ -2,7 +2,6 @@
  * app.js — WFH System Main Application
  * ──────────────────────────────────────
  * จัดการ: state, routing, UI, form submission
- * v2.1 — แก้ไข: โลโกใน PDF ด้วย Base64 preload
  */
 
 'use strict';
@@ -20,93 +19,63 @@ let currentRptPage = 1;
 let _rptStats      = { ontime: 0, late: 0, early: 0 };
 let attachments    = [];
 let dailyPdfData   = [];
-let _logoB64Cache  = null;   // ← cache รูป logo เป็น base64
-
+let _logoB64Cache  = null;   // cache โลโก้ base64
 
 const RPT_PER_PAGE = 15;
 
 /* ════════════════════════════════════════
    LOGO BASE64 HELPER
+   ดึงโลโก้จาก raw GitHub URL แปลงเป็น base64
    ════════════════════════════════════════ */
-
-/**
- * ดึง logo URL แปลงเป็น base64 data URL แล้ว cache ไว้
- * เรียกก่อนสร้าง PDF ทุกครั้ง เพื่อให้รูปขึ้นแม้ print ใน iframe
- */
 async function _getLogoBase64() {
   if (_logoB64Cache) return _logoB64Cache;
-  const url = 'https://lh3.googleusercontent.com/d/1tEuBft9_e3q6Q79o6vHI_HMRaL2hSNB3';
-  // วิธีที่ 1: fetch
+
+  // ใช้ raw URL จาก GitHub (ไม่มีปัญหา CORS)
+  const url = window.LOGO_URL || '';
+  if (!url) return null;
+
   try {
     const res = await fetch(url, { cache: 'force-cache' });
     if (res.ok) {
       const blob = await res.blob();
-      const b64 = await new Promise(resolve => {
+      const b64  = await new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload  = () => { _logoB64Cache = reader.result; resolve(reader.result); };
-        reader.onerror = () => resolve(null);
+        reader.onload  = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('FileReader error'));
         reader.readAsDataURL(blob);
       });
-      if (b64) return b64;
+      _logoB64Cache = b64;
+      return b64;
     }
   } catch {}
-  // วิธีที่ 2: XHR fallback
-  try {
-    const b64 = await new Promise(resolve => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
-      xhr.responseType = 'blob';
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          const reader = new FileReader();
-          reader.onload  = e => { _logoB64Cache = e.target.result; resolve(e.target.result); };
-          reader.onerror = () => resolve(null);
-          reader.readAsDataURL(xhr.response);
-        } else resolve(null);
-      };
-      xhr.onerror = () => resolve(null);
-      xhr.send();
-    });
-    if (b64) return b64;
-  } catch {}
-  // วิธีที่ 3: คืน URL ตรงๆ เป็น fallback
-  return url;
+  return null;  // ถ้าโหลดไม่ได้ คืน null (โลโก้จะไม่แสดง แต่ไม่ error)
 }
 
 /* ════════════════════════════════════════
    INIT
    ════════════════════════════════════════ */
 window.addEventListener('load', async () => {
-  // ฉีด viewport meta (ป้องกัน parent frame override)
   _injectViewport(document);
   try { if (window.parent !== window) _injectViewport(window.parent.document); } catch {}
 
-  // เริ่มนาฬิกา
   _startClock();
   _updateDate();
 
-  // ตั้งค่าเริ่มต้น input
-  _q('#pdfDate').value = _todayISO();
-  _q('#mrMonth').value = _todayYM();
+  _q('#pdfDate').value     = _todayISO();
+  _q('#mrMonth').value     = _todayYM();
   _q('#leaveYear').textContent = new Date().getFullYear();
   renderLeaveQuota([]);
 
   _q('#leaveStartDate').addEventListener('change', calcLeaveDays);
   _q('#leaveEndDate').addEventListener('change',   calcLeaveDays);
 
-  // Camera module — setup callbacks
-  Camera.onCapture = (slot) => {
-    if (slot === 'in') setStep('ci', 2);
-  };
-  Camera.onRetake = (slot) => {
-    if (slot === 'in') setStep('ci', 1);
-  };
+  Camera.onCapture = (slot) => { if (slot === 'in') setStep('ci', 2); };
+  Camera.onRetake  = (slot) => { if (slot === 'in') setStep('ci', 1); };
   Camera.init();
 
-  // Preload โลโก้ล่วงหน้าเพื่อไม่ให้ delay ตอนกด print
+  // Preload โลโก้ล่วงหน้า
   _getLogoBase64().catch(() => {});
 
-  // Session restore
   const saved = sessionStorage.getItem('wfhUser');
   if (saved) {
     currentUser = JSON.parse(saved);
@@ -140,28 +109,20 @@ async function handleLogin(e) {
   const btn = _q('#loginBtn');
   _btnLoading(btn, 'กำลังเข้าสู่ระบบ...');
   try {
-    const res = await API.auth.login({
-      username: _val('loginUser'),
-      password: _val('loginPass'),
-    });
+    const res = await API.auth.login({ username: _val('loginUser'), password: _val('loginPass') });
     if (res.success) {
       currentUser = res.user;
       sessionStorage.setItem('wfhUser', JSON.stringify(currentUser));
       await showApp();
-    } else {
-      toast(res.message || 'เข้าสู่ระบบไม่สำเร็จ', 'error');
-    }
-  } catch {
-    toast('ไม่สามารถเชื่อมต่อระบบได้', 'error');
-  } finally {
-    _btnReset(btn, '<i class="fas fa-sign-in-alt"></i> เข้าสู่ระบบ');
-  }
+    } else { toast(res.message || 'เข้าสู่ระบบไม่สำเร็จ', 'error'); }
+  } catch { toast('ไม่สามารถเชื่อมต่อระบบได้', 'error'); }
+  finally  { _btnReset(btn, '<i class="fas fa-sign-in-alt"></i> เข้าสู่ระบบ'); }
 }
 
 async function handleRegister(e) {
   e.preventDefault();
   const pass = _val('regPass'), pass2 = _val('regPass2');
-  if (pass !== pass2)  { toast('รหัสผ่านไม่ตรงกัน', 'error');          return; }
+  if (pass !== pass2)  { toast('รหัสผ่านไม่ตรงกัน', 'error'); return; }
   if (pass.length < 6) { toast('รหัสผ่านต้องมีอย่างน้อย 6 ตัว', 'error'); return; }
   const btn = _q('#registerBtn');
   _btnLoading(btn);
@@ -171,12 +132,10 @@ async function handleRegister(e) {
       dept: _val('regDept'), pos: _val('regPos'),
     });
     if (res.success) {
-      await Swal.fire({ icon:'success', title:'ลงทะเบียนสำเร็จ!', text:'กรุณาเข้าสู่ระบบ', confirmButtonColor:'#26A69A' });
+      await Swal.fire({ icon: 'success', title: 'ลงทะเบียนสำเร็จ!', text: 'กรุณาเข้าสู่ระบบ', confirmButtonColor: '#26A69A' });
       switchAuthTab('login');
       _q('#loginUser').value = _val('regEmail');
-    } else {
-      toast(res.message, 'error');
-    }
+    } else { toast(res.message, 'error'); }
   } catch { toast('ไม่สามารถเชื่อมต่อ', 'error'); }
   finally  { _btnReset(btn, '<i class="fas fa-user-plus"></i> ลงทะเบียน'); }
 }
@@ -209,7 +168,7 @@ async function showApp() {
   hide('appLoader'); hide('loginPage');
   _q('#appLayout').style.display = 'flex';
   _q('#sidebarAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
-  _q('#sidebarName').textContent   = currentUser.name  || '';
+  _q('#sidebarName').textContent   = currentUser.name || '';
   _q('#sidebarRole').textContent   = currentUser.role === 'admin' ? 'ADMIN' : 'EMPLOYEE';
 
   if (currentUser.role === 'admin') {
@@ -248,14 +207,9 @@ function switchPage(pid) {
   if (page) page.classList.add('active');
 
   const titles = {
-    dashboard:     'Dashboard',
-    checkin:       'ลงเวลาเข้างาน',
-    checkout:      'ลงเวลาออกงาน',
-    history:       currentUser?.role === 'admin' ? 'ประวัติการเข้างาน' : 'ประวัติของฉัน',
-    report:        'รายงานทั้งหมด',
-    monthlyReport: 'รายงานรายเดือน',
-    users:         'จัดการผู้ใช้',
-    leave:         'ขอลาหยุด',
+    dashboard: 'Dashboard', checkin: 'ลงเวลาเข้างาน', checkout: 'ลงเวลาออกงาน',
+    history: currentUser?.role === 'admin' ? 'ประวัติการเข้างาน' : 'ประวัติของฉัน',
+    report: 'รายงานทั้งหมด', monthlyReport: 'รายงานรายเดือน', users: 'จัดการผู้ใช้', leave: 'ขอลาหยุด',
   };
   _q('#pageTitle').textContent = titles[pid] || pid;
 
@@ -325,20 +279,9 @@ async function loadTodayStatus() {
 
 function renderRecentTable(records) {
   const tbody = _q('#recentBody');
-  if (!records.length) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><i class="fas fa-inbox"></i>ยังไม่มีข้อมูล</div></td></tr>';
-    return;
-  }
+  if (!records.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><i class="fas fa-inbox"></i>ยังไม่มีข้อมูล</div></td></tr>'; return; }
   tbody.innerHTML = records.map(r =>
-    `<tr>
-      <td style="font-weight:600;white-space:nowrap">${r.date || '-'}</td>
-      <td><b>${r.name || '-'}</b></td>
-      <td style="font-size:12px;color:var(--text3)">${r.dept || '-'}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--teal);white-space:nowrap">${r.checkIn || '-'}</td>
-      <td>${badge(r.checkInStatus)}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--orange);white-space:nowrap">${r.checkOut || '-'}</td>
-      <td style="max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text2)">${r.task || '-'}</td>
-    </tr>`
+    `<tr><td style="font-weight:600;white-space:nowrap">${r.date || '-'}</td><td><b>${r.name || '-'}</b></td><td style="font-size:12px;color:var(--text3)">${r.dept || '-'}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--teal);white-space:nowrap">${r.checkIn || '-'}</td><td>${badge(r.checkInStatus)}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--orange);white-space:nowrap">${r.checkOut || '-'}</td><td style="max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text2)">${r.task || '-'}</td></tr>`
   ).join('');
 }
 
@@ -351,29 +294,8 @@ function renderTodayStatusChart(ontime, late) {
   const total = ontime + late, hasData = total > 0;
   window._todayStatusChart = new Chart(canvas, {
     type: 'doughnut',
-    data: {
-      labels: ['ตรงเวลา', 'มาสาย'],
-      datasets: [{
-        data: hasData ? [ontime, late] : [1],
-        backgroundColor: hasData ? ['rgba(76,175,80,.8)', 'rgba(239,83,80,.8)'] : ['rgba(200,200,200,.3)'],
-        borderWidth: hasData ? 2 : 0,
-        borderColor: '#fff',
-        hoverOffset: 4,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      cutout: '68%',
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          enabled: hasData,
-          callbacks: { label: ctx => `${ctx.label}: ${ctx.raw} คน (${total > 0 ? Math.round(ctx.raw / total * 100) : 0}%)` },
-        },
-      },
-      animation: { animateScale: true },
-    },
+    data: { labels: ['ตรงเวลา', 'มาสาย'], datasets: [{ data: hasData ? [ontime, late] : [1], backgroundColor: hasData ? ['rgba(76,175,80,.8)', 'rgba(239,83,80,.8)'] : ['rgba(200,200,200,.3)'], borderWidth: hasData ? 2 : 0, borderColor: '#fff', hoverOffset: 4 }] },
+    options: { responsive: true, maintainAspectRatio: true, cutout: '68%', plugins: { legend: { display: false }, tooltip: { enabled: hasData, callbacks: { label: ctx => `${ctx.label}: ${ctx.raw} คน (${total > 0 ? Math.round(ctx.raw / total * 100) : 0}%)` } } }, animation: { animateScale: true } },
   });
 }
 
@@ -391,33 +313,8 @@ async function loadMonthlyChart() {
     const persons = res.byDept.map(d => d.persons);
     window._chartByDept = new Chart(canvas, {
       type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: 'ตรงเวลา', data: ontime, backgroundColor: 'rgba(76,175,80,.8)', borderColor: 'rgba(76,175,80,1)', borderWidth: 1 },
-          { label: 'มาสาย',   data: late,   backgroundColor: 'rgba(239,83,80,.8)', borderColor: 'rgba(239,83,80,1)', borderWidth: 1 },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          legend: { position: 'top', labels: { boxWidth: 12, padding: 16, font: { size: 12 } } },
-          tooltip: {
-            callbacks: {
-              label: ctx => {
-                const v = ctx.raw || 0, t = (ontime[ctx.dataIndex] || 0) + (late[ctx.dataIndex] || 0);
-                return `${ctx.dataset.label}: ${v} (${t > 0 ? Math.round(v / t * 100) : 0}%)`;
-              },
-              afterLabel: ctx => `บุคลากร: ${persons[ctx.dataIndex]} คน`,
-            },
-          },
-        },
-        scales: {
-          x: { stacked: true, grid: { display: false } },
-          y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
-        },
-      },
+      data: { labels, datasets: [{ label: 'ตรงเวลา', data: ontime, backgroundColor: 'rgba(76,175,80,.8)', borderColor: 'rgba(76,175,80,1)', borderWidth: 1 }, { label: 'มาสาย', data: late, backgroundColor: 'rgba(239,83,80,.8)', borderColor: 'rgba(239,83,80,1)', borderWidth: 1 }] },
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'top', labels: { boxWidth: 12, padding: 16, font: { size: 12 } } }, tooltip: { callbacks: { label: ctx => { const v = ctx.raw || 0, t = (ontime[ctx.dataIndex] || 0) + (late[ctx.dataIndex] || 0); return `${ctx.dataset.label}: ${v} (${t > 0 ? Math.round(v / t * 100) : 0}%)`; }, afterLabel: ctx => `บุคลากร: ${persons[ctx.dataIndex]} คน` } } }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } } },
     });
   } catch {}
 }
@@ -432,16 +329,11 @@ async function submitCheckIn() {
   _btnLoading(btn, 'กำลังบันทึก...');
   try {
     const res = await API.attendance.checkIn({
-      userId:          currentUser.uid,
-      userName:        currentUser.name,
-      department:      currentUser.dept,
-      task:            _val('ciTask'),
-      location:        _val('ciLocation'),
-      gps:             ciGPS,
-      imageBase64:     Camera.getB64('in'),
+      userId: currentUser.uid, userName: currentUser.name, department: currentUser.dept,
+      task: _val('ciTask'), location: _val('ciLocation'), gps: ciGPS,
+      imageBase64: Camera.getB64('in'),
       signatureBase64: sigPadIn && !sigPadIn.isEmpty() ? sigPadIn.toDataURL() : null,
     });
-
     if (res.success) {
       toast(res.message, 'success');
       API.invalidate('dashboard');
@@ -473,14 +365,11 @@ async function submitCheckOut() {
   _btnLoading(btn, 'กำลังบันทึก...');
   try {
     const res = await API.attendance.checkOut({
-      userId:          currentUser.uid,
-      userName:        currentUser.name,
-      department:      currentUser.dept,
-      task:            _val('coTask'),
-      gps:             coGPS,
-      imageBase64:     Camera.getB64('out'),
+      userId: currentUser.uid, userName: currentUser.name, department: currentUser.dept,
+      task: _val('coTask'), gps: coGPS,
+      imageBase64: Camera.getB64('out'),
       signatureBase64: sigPadOut && !sigPadOut.isEmpty() ? sigPadOut.toDataURL() : null,
-      attachments:     attachments.map(a => ({ name: a.name, data: a.data, mimeType: a.mimeType })),
+      attachments: attachments.map(a => ({ name: a.name, data: a.data, mimeType: a.mimeType })),
     });
     if (res.success) {
       toast(res.message, 'success');
@@ -492,9 +381,7 @@ async function submitCheckOut() {
       attachments = [];
       renderAttachList();
       setTimeout(() => switchPage('dashboard'), 1500);
-    } else {
-      toast(res.message, 'error');
-    }
+    } else { toast(res.message, 'error'); }
   } catch { toast('เกิดข้อผิดพลาด', 'error'); }
   finally  { _btnReset(btn, '<i class="fas fa-sign-out-alt"></i> บันทึกเวลาออกงาน'); }
 }
@@ -525,29 +412,21 @@ function initSigPads() {
     const w = Math.max(canvas.parentElement.getBoundingClientRect().width - 4, 200);
     canvas.width  = Math.floor(w);
     canvas.height = 110;
-    const pad = new SignaturePad(canvas, {
-      backgroundColor: 'rgb(255,255,255)',
-      penColor: '#37474F',
-      minWidth: 1.5,
-      maxWidth: 3,
-    });
+    const pad = new SignaturePad(canvas, { backgroundColor: 'rgb(255,255,255)', penColor: '#37474F', minWidth: 1.5, maxWidth: 3 });
     if (type === 'in') sigPadIn = pad; else sigPadOut = pad;
   });
 }
-
 function resizeSigPads() {
   [['sigIn', 'in'], ['sigOut', 'out']].forEach(([cid, type]) => {
     const canvas = _q(`#${cid}`), pad = type === 'in' ? sigPadIn : sigPadOut;
     if (!canvas || !pad) return;
-    const data = pad.toData();
-    const w    = Math.max(canvas.parentElement.getBoundingClientRect().width - 4, 200);
+    const data = pad.toData(), w = Math.max(canvas.parentElement.getBoundingClientRect().width - 4, 200);
     canvas.width  = Math.floor(w);
     canvas.height = 110;
     pad.clear();
     if (data?.length > 0) pad.fromData(data);
   });
 }
-
 function clearSig(t) {
   if (t === 'in'  && sigPadIn)  sigPadIn.clear();
   if (t === 'out' && sigPadOut) sigPadOut.clear();
@@ -581,30 +460,20 @@ function onAttachFiles(input) {
   if (files.length > rem) toast(`เพิ่มได้อีก ${rem} ไฟล์`, 'info');
   toAdd.forEach(file => {
     const r = new FileReader();
-    r.onload = ev => {
-      attachments.push({ name: file.name, data: ev.target.result, mimeType: file.type, size: file.size });
-      renderAttachList();
-    };
+    r.onload = ev => { attachments.push({ name: file.name, data: ev.target.result, mimeType: file.type, size: file.size }); renderAttachList(); };
     r.readAsDataURL(file);
   });
   input.value = '';
 }
-
 function renderAttachList() {
   const list = _q('#attachList');
   if (!list) return;
   if (!attachments.length) { list.innerHTML = ''; return; }
   const icons = { 'application/pdf': 'fa-file-pdf', 'image/jpeg': 'fa-file-image', 'image/png': 'fa-file-image' };
   list.innerHTML = attachments.map((a, i) =>
-    `<div class="attach-item">
-      <i class="fas ${icons[a.mimeType] || 'fa-file'}" style="color:var(--orange)"></i>
-      <span>${a.name}</span>
-      <span style="font-size:10px;color:var(--text3);flex-shrink:0">${(a.size / 1024).toFixed(0)} KB</span>
-      <button class="remove-attach" onclick="removeAttach(${i})"><i class="fas fa-times"></i></button>
-    </div>`
+    `<div class="attach-item"><i class="fas ${icons[a.mimeType] || 'fa-file'}" style="color:var(--orange)"></i><span>${a.name}</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${(a.size / 1024).toFixed(0)} KB</span><button class="remove-attach" onclick="removeAttach(${i})"><i class="fas fa-times"></i></button></div>`
   ).join('');
 }
-
 function removeAttach(i) { attachments.splice(i, 1); renderAttachList(); }
 
 /* ════════════════════════════════════════
@@ -628,7 +497,7 @@ async function loadHistory() {
   try {
     const uid = isAdmin ? (_q('#histUserSel')?.value || 'all') : currentUser.uid;
     const res = await API.attendance.getAll({
-      userId:    uid,
+      userId: uid,
       startDate: _q('#histStart')?.value || undefined,
       endDate:   _q('#histEnd')?.value   || undefined,
     });
@@ -641,27 +510,11 @@ async function loadHistory() {
 function renderHistTable(data, isAdmin) {
   const tbody   = _q('#histBody');
   const colSpan = isAdmin ? 11 : 9;
-  if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="${colSpan}"><div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div></td></tr>`;
-    return;
-  }
+  if (!data.length) { tbody.innerHTML = `<tr><td colspan="${colSpan}"><div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div></td></tr>`; return; }
   tbody.innerHTML = data.map(r => {
     const lm       = parseInt(r['นาทีสาย (เข้า)']) || 0;
-    const nameCols = isAdmin
-      ? `<td style="white-space:nowrap;font-weight:600">${r['ชื่อ-สกุล'] || '-'}</td><td style="font-size:11px;color:var(--text3)">${r['แผนก'] || '-'}</td>`
-      : '';
-    return `<tr>
-      ${nameCols}
-      <td style="font-weight:600;white-space:nowrap">${r['วันที่'] || '-'}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--teal);white-space:nowrap">${r['เวลาเข้างาน'] || '-'}</td>
-      <td>${badge(r['สถานะเข้า'])}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;color:${lm > 0 ? 'var(--red)' : 'var(--text3)'}">${lm}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--orange);white-space:nowrap">${r['เวลาออกงาน'] || '-'}</td>
-      <td>${badge(r['สถานะออก'])}</td>
-      <td style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text2)">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td>
-      <td>${renderAttachLinks(r)}</td>
-      <td>${renderImgLinks(r, 'URL รูปเข้า', 'URL รูปออก')}</td>
-    </tr>`;
+    const nameCols = isAdmin ? `<td style="white-space:nowrap;font-weight:600">${r['ชื่อ-สกุล'] || '-'}</td><td style="font-size:11px;color:var(--text3)">${r['แผนก'] || '-'}</td>` : '';
+    return `<tr>${nameCols}<td style="font-weight:600;white-space:nowrap">${r['วันที่'] || '-'}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--teal);white-space:nowrap">${r['เวลาเข้างาน'] || '-'}</td><td>${badge(r['สถานะเข้า'])}</td><td style="font-family:'IBM Plex Mono',monospace;color:${lm > 0 ? 'var(--red)' : 'var(--text3)'}">${lm}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--orange);white-space:nowrap">${r['เวลาออกงาน'] || '-'}</td><td>${badge(r['สถานะออก'])}</td><td style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text2)">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td><td>${renderAttachLinks(r)}</td><td>${renderImgLinks(r, 'URL รูปเข้า', 'URL รูปออก')}</td></tr>`;
   }).join('');
 }
 
@@ -679,17 +532,10 @@ function renderAttachLinks(r) {
   const links = ['URL ไฟล์แนบ 1', 'URL ไฟล์แนบ 2', 'URL ไฟล์แนบ 3'].map((f, j) => {
     const v = (r[f] || '').trim();
     return v.startsWith('http')
-      ? `<a href="${v}" target="_blank" rel="noopener"
-            style="display:inline-flex;align-items:center;gap:3px;color:var(--orange);margin-right:4px;
-                   background:rgba(255,138,101,.1);padding:2px 7px;border-radius:9px;
-                   border:1px solid rgba(255,138,101,.3);font-size:11px;text-decoration:none">
-           <i class="fas fa-paperclip"></i> ${j + 1}
-         </a>`
+      ? `<a href="${v}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:3px;color:var(--orange);margin-right:4px;background:rgba(255,138,101,.1);padding:2px 7px;border-radius:9px;border:1px solid rgba(255,138,101,.3);font-size:11px;text-decoration:none"><i class="fas fa-paperclip"></i> ${j + 1}</a>`
       : '';
   }).filter(Boolean);
-  return links.length
-    ? `<div style="display:flex;flex-wrap:wrap;gap:3px">${links.join('')}</div>`
-    : '<span style="color:var(--text3)">-</span>';
+  return links.length ? `<div style="display:flex;flex-wrap:wrap;gap:3px">${links.join('')}</div>` : '<span style="color:var(--text3)">-</span>';
 }
 
 function renderImgLinks(r, keyIn, keyOut) {
@@ -714,19 +560,8 @@ function previewImg(rawUrl, title) {
   body.innerHTML = '<div style="padding:40px;color:var(--text3);text-align:center"><i class="fas fa-spinner fa-spin" style="font-size:24px"></i></div>';
   link.href = rawUrl;
   const img = new Image();
-  img.onload  = () => {
-    body.innerHTML = '';
-    img.style.cssText = 'max-width:100%;max-height:70vh;border-radius:10px;box-shadow:var(--sh-md);object-fit:contain;display:block;margin:0 auto';
-    body.appendChild(img);
-  };
-  img.onerror = () => {
-    body.innerHTML = `<div style="padding:32px;text-align:center">
-      <i class="fas fa-exclamation-circle" style="font-size:36px;color:var(--orange);display:block;margin-bottom:12px"></i>
-      <a href="${rawUrl}" target="_blank" class="btn btn-teal" style="text-decoration:none">
-        <i class="fas fa-external-link-alt"></i> เปิดใน Drive
-      </a>
-    </div>`;
-  };
+  img.onload  = () => { body.innerHTML = ''; img.style.cssText = 'max-width:100%;max-height:70vh;border-radius:10px;box-shadow:var(--sh-md);object-fit:contain;display:block;margin:0 auto'; body.appendChild(img); };
+  img.onerror = () => { body.innerHTML = `<div style="padding:32px;text-align:center"><i class="fas fa-exclamation-circle" style="font-size:36px;color:var(--orange);display:block;margin-bottom:12px"></i><a href="${rawUrl}" target="_blank" class="btn btn-teal" style="text-decoration:none"><i class="fas fa-external-link-alt"></i> เปิดใน Drive</a></div>`; };
   img.src = driveImgUrl(rawUrl);
   showModal('imgModal');
 }
@@ -748,9 +583,9 @@ async function loadReport() {
   try {
     const res = await API.attendance.getAll({
       userId:    _val('rptUser'),
-      startDate: _q('#rptStart').value  || undefined,
-      endDate:   _q('#rptEnd').value    || undefined,
-      search:    _val('rptSearch')      || undefined,
+      startDate: _q('#rptStart').value || undefined,
+      endDate:   _q('#rptEnd').value   || undefined,
+      search:    _val('rptSearch')     || undefined,
     });
     if (!res.success) return;
     allReportData  = res.data;
@@ -772,26 +607,10 @@ function renderReportTable() {
   const start    = (currentRptPage - 1) * RPT_PER_PAGE;
   const pageData = allReportData.slice(start, start + RPT_PER_PAGE);
   const tbody    = _q('#reportBody');
-  if (!allReportData.length) {
-    tbody.innerHTML = '<tr><td colspan="11"><div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div></td></tr>';
-    _q('#rptPagination').innerHTML = '';
-    return;
-  }
+  if (!allReportData.length) { tbody.innerHTML = '<tr><td colspan="11"><div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div></td></tr>'; _q('#rptPagination').innerHTML = ''; return; }
   tbody.innerHTML = pageData.map(r => {
     const lm = parseInt(r['นาทีสาย (เข้า)']) || 0;
-    return `<tr>
-      <td style="font-weight:600;white-space:nowrap">${r['วันที่'] || '-'}</td>
-      <td style="white-space:nowrap">${r['ชื่อ-สกุล'] || '-'}</td>
-      <td style="font-size:11px;color:var(--text3)">${r['แผนก'] || '-'}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--teal);white-space:nowrap">${r['เวลาเข้างาน'] || '-'}</td>
-      <td>${badge(r['สถานะเข้า'])}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;color:${lm > 0 ? 'var(--red)' : 'var(--text3)'}">${lm}</td>
-      <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--orange);white-space:nowrap">${r['เวลาออกงาน'] || '-'}</td>
-      <td>${badge(r['สถานะออก'])}</td>
-      <td style="font-size:11px;color:var(--text2);max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td>
-      <td>${renderAttachLinks(r)}</td>
-      <td>${renderImgLinks(r, 'URL รูปเข้า', 'URL รูปออก')}</td>
-    </tr>`;
+    return `<tr><td style="font-weight:600;white-space:nowrap">${r['วันที่'] || '-'}</td><td style="white-space:nowrap">${r['ชื่อ-สกุล'] || '-'}</td><td style="font-size:11px;color:var(--text3)">${r['แผนก'] || '-'}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--teal);white-space:nowrap">${r['เวลาเข้างาน'] || '-'}</td><td>${badge(r['สถานะเข้า'])}</td><td style="font-family:'IBM Plex Mono',monospace;color:${lm > 0 ? 'var(--red)' : 'var(--text3)'}">${lm}</td><td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--orange);white-space:nowrap">${r['เวลาออกงาน'] || '-'}</td><td>${badge(r['สถานะออก'])}</td><td style="font-size:11px;color:var(--text2);max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td><td>${renderAttachLinks(r)}</td><td>${renderImgLinks(r, 'URL รูปเข้า', 'URL รูปออก')}</td></tr>`;
   }).join('');
   renderPagination();
 }
@@ -801,12 +620,10 @@ function renderPagination() {
   if (total <= 1) { pag.innerHTML = ''; return; }
   let h = `<span class="page-info">${(currentRptPage - 1) * RPT_PER_PAGE + 1}–${Math.min(currentRptPage * RPT_PER_PAGE, allReportData.length)} / ${allReportData.length}</span>`;
   if (currentRptPage > 1) h += `<button class="page-btn" onclick="changePage(${currentRptPage - 1})"><i class="fas fa-chevron-left"></i></button>`;
-  for (let i = Math.max(1, currentRptPage - 2); i <= Math.min(total, currentRptPage + 2); i++)
-    h += `<button class="page-btn ${i === currentRptPage ? 'active' : ''}" onclick="changePage(${i})">${i}</button>`;
+  for (let i = Math.max(1, currentRptPage - 2); i <= Math.min(total, currentRptPage + 2); i++) h += `<button class="page-btn ${i === currentRptPage ? 'active' : ''}" onclick="changePage(${i})">${i}</button>`;
   if (currentRptPage < total) h += `<button class="page-btn" onclick="changePage(${currentRptPage + 1})"><i class="fas fa-chevron-right"></i></button>`;
   pag.innerHTML = h;
 }
-
 function changePage(p) { currentRptPage = p; renderReportTable(); window.scrollTo(0, 0); }
 
 /* ════════════════════════════════════════
@@ -825,49 +642,19 @@ async function loadMonthlyReport() {
       API.attendance.getAll({ userId: 'all', startDate: start, endDate: end }),
       API.dashboard.monthlyStats({ month }),
     ]);
-    if (!attRes.success) {
-      body.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div>';
-      return;
-    }
+    if (!attRes.success) { body.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i>ไม่พบข้อมูล</div>'; return; }
     const monthLabel = new Date(+y, +m - 1, 1).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
     const stats      = statsRes.byUser || [];
-    let html = `<div style="margin-bottom:16px">
-      <h3 style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">
-        <i class="fas fa-chart-line" style="color:var(--teal)"></i> สรุปรายเดือน: ${monthLabel}
-      </h3>
-    </div>`;
-    html += `<div class="panel" style="margin-bottom:16px">
-      <div class="panel-head">
-        <div class="panel-title">
-          <div class="panel-icon" style="background:var(--teal)"><i class="fas fa-table"></i></div>
-          สรุปรายบุคคล
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr>
-            <th>ชื่อ-สกุล</th><th>กลุ่มงาน</th><th>วันที่เข้างาน</th>
-            <th>ตรงเวลา</th><th>มาสาย</th><th>ออกก่อน</th><th>%ตรงเวลา</th>
-          </tr></thead>
-          <tbody>`;
+    let html = `<div style="margin-bottom:16px"><h3 style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px"><i class="fas fa-chart-line" style="color:var(--teal)"></i> สรุปรายเดือน: ${monthLabel}</h3></div>`;
+    html += `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div class="panel-title"><div class="panel-icon" style="background:var(--teal)"><i class="fas fa-table"></i></div>สรุปรายบุคคล</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>ชื่อ-สกุล</th><th>กลุ่มงาน</th><th>วันที่เข้างาน</th><th>ตรงเวลา</th><th>มาสาย</th><th>ออกก่อน</th><th>%ตรงเวลา</th></tr></thead><tbody>`;
     stats.forEach(u => {
       const pct      = u.days > 0 ? Math.round(u.ontime / u.days * 100) : 0;
       const pctColor = pct >= 80 ? 'var(--green-d)' : pct >= 60 ? 'var(--orange)' : 'var(--red)';
-      html += `<tr>
-        <td><b>${u.name}</b></td>
-        <td style="font-size:11px;color:var(--text3)">${u.dept}</td>
-        <td style="font-family:'IBM Plex Mono',monospace;text-align:center">${u.days}</td>
-        <td><span class="badge b-green">${u.ontime}</span></td>
-        <td><span class="badge b-red">${u.late}</span></td>
-        <td><span class="badge b-orange">${u.earlyOut}</span></td>
-        <td><span style="font-weight:700;color:${pctColor};font-family:'IBM Plex Mono',monospace">${pct}%</span></td>
-      </tr>`;
+      html += `<tr><td><b>${u.name}</b></td><td style="font-size:11px;color:var(--text3)">${u.dept}</td><td style="font-family:'IBM Plex Mono',monospace;text-align:center">${u.days}</td><td><span class="badge b-green">${u.ontime}</span></td><td><span class="badge b-red">${u.late}</span></td><td><span class="badge b-orange">${u.earlyOut}</span></td><td><span style="font-weight:700;color:${pctColor};font-family:'IBM Plex Mono',monospace">${pct}%</span></td></tr>`;
     });
     html += '</tbody></table></div></div>';
     body.innerHTML = html;
-  } catch {
-    body.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i>โหลดข้อมูลไม่สำเร็จ</div>';
-  }
+  } catch { body.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i>โหลดข้อมูลไม่สำเร็จ</div>'; }
 }
 
 /* ════════════════════════════════════════
@@ -885,12 +672,8 @@ async function checkLeaveEnabled() {
   try {
     const res = await API.system.leaveEnabled();
     const ok  = res.enabled !== false;
-    _qa('.nav-item').forEach(el => {
-      if ((el.getAttribute('onclick') || '').includes("'leave'")) el.style.display = ok ? '' : 'none';
-    });
-    _qa('.quick-btn').forEach(el => {
-      if ((el.getAttribute('onclick') || '').includes("'leave'")) el.style.display = ok ? '' : 'none';
-    });
+    _qa('.nav-item').forEach(el => { if ((el.getAttribute('onclick') || '').includes("'leave'")) el.style.display = ok ? '' : 'none'; });
+    _qa('.quick-btn').forEach(el => { if ((el.getAttribute('onclick') || '').includes("'leave'")) el.style.display = ok ? '' : 'none'; });
   } catch {}
 }
 
@@ -907,18 +690,11 @@ function renderLeaveQuota(myLeaves) {
   grid.innerHTML = LEAVE_TYPES.map(t => {
     const used = (myLeaves || []).filter(l => {
       const p  = (l['วันที่เริ่มลา'] || '').split('/');
-      const yr = p.length === 3
-        ? parseInt(p[2])
-        : parseInt((l['วันที่เริ่มลา'] || '').split('-')[0] || '0');
+      const yr = p.length === 3 ? parseInt(p[2]) : parseInt((l['วันที่เริ่มลา'] || '').split('-')[0] || '0');
       return l['ประเภทการลา'] === t.key && l['สถานะ'] !== 'rejected' && yr === year;
     }).reduce((s, l) => s + parseInt(l['จำนวนวัน'] || 0), 0);
     const pct = Math.min(Math.round(used / t.quota * 100), 100);
-    return `<div class="leave-type-card">
-      <div class="lt-icon"><i class="bx ${t.icon}" style="font-size:30px;color:${t.color}"></i></div>
-      <div class="lt-name">${t.key}</div>
-      <div class="lt-days" style="color:${t.color};font-weight:700">${Math.max(0, t.quota - used)} / ${t.quota} วัน</div>
-      <div class="leave-quota-bar"><div class="leave-quota-fill" style="width:${pct}%;background:${t.color}"></div></div>
-    </div>`;
+    return `<div class="leave-type-card"><div class="lt-icon"><i class="bx ${t.icon}" style="font-size:30px;color:${t.color}"></i></div><div class="lt-name">${t.key}</div><div class="lt-days" style="color:${t.color};font-weight:700">${Math.max(0, t.quota - used)} / ${t.quota} วัน</div><div class="leave-quota-bar"><div class="leave-quota-fill" style="width:${pct}%;background:${t.color}"></div></div></div>`;
   }).join('');
 }
 
@@ -933,74 +709,30 @@ async function loadLeaveHistory() {
     const leaves   = res.data || [];
     const myLeaves = leaves.filter(l => String(l['UserID']) === String(currentUser.uid));
     renderLeaveQuota(myLeaves);
-    if (!leaves.length) {
-      body.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i>ยังไม่มีประวัติการลา</div>';
-      return;
-    }
+    if (!leaves.length) { body.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i>ยังไม่มีประวัติการลา</div>'; return; }
     const typeMap = Object.fromEntries(LEAVE_TYPES.map(t => [t.key, t]));
-    const stMap   = {
-      pending:  ['lb-pending',  '<i class="bx bx-time-five"></i> รอพิจารณา'],
-      approved: ['lb-approved', '<i class="bx bx-check-circle"></i> อนุมัติแล้ว'],
-      rejected: ['lb-rejected', '<i class="bx bx-x-circle"></i> ไม่อนุมัติ'],
-    };
+    const stMap   = { pending: ['lb-pending', '<i class="bx bx-time-five"></i> รอพิจารณา'], approved: ['lb-approved', '<i class="bx bx-check-circle"></i> อนุมัติแล้ว'], rejected: ['lb-rejected', '<i class="bx bx-x-circle"></i> ไม่อนุมัติ'] };
     body.innerHTML = leaves.map(l => {
       const t   = typeMap[l['ประเภทการลา']] || { icon: 'bx-calendar', color: '#78909C' };
       const sts = l['สถานะ'] || 'pending';
       const st  = stMap[sts] || stMap['pending'];
-      return `<div class="leave-card" style="margin-bottom:10px">
-        <div class="leave-card-icon" style="background:${t.color}22;color:${t.color}">
-          <i class="bx ${t.icon}" style="font-size:22px"></i>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-            <b>${l['ประเภทการลา']}</b>
-            <span class="leave-badge ${st[0]}">${st[1]}</span>
-            <span style="font-size:11px;color:var(--text3)">${l['จำนวนวัน']} วัน</span>
-          </div>
-          <div style="font-size:12px;color:var(--text2)">
-            <i class="bx bx-calendar" style="color:var(--teal)"></i>
-            ${l['วันที่เริ่มลา']} – ${l['วันที่สิ้นสุด']}
-          </div>
-          ${isAdmin ? `<div style="font-size:12px;color:var(--text3);margin-top:2px"><i class="bx bxs-user" style="color:var(--blue)"></i> ${l['ชื่อ-สกุล']} (${l['แผนก']})</div>` : ''}
-          <div style="font-size:12px;color:var(--text3);margin-top:3px">
-            <i class="bx bx-message-square-detail"></i> ${l['เหตุผล']}
-          </div>
-          ${l['หมายเหตุผู้อนุมัติ'] ? `<div style="font-size:11px;color:var(--red);margin-top:3px"><i class="bx bx-comment-error"></i> หมายเหตุ: ${l['หมายเหตุผู้อนุมัติ']}</div>` : ''}
-        </div>
-        ${isAdmin && sts === 'pending'
-          ? `<div style="display:flex;gap:6px;flex-shrink:0;flex-direction:column;align-items:flex-end">
-               <button class="btn btn-sm btn-green" onclick="adminUpdateLeave('${l['LeaveID']}','approved')"><i class="bx bx-check"></i> อนุมัติ</button>
-               <button class="btn btn-sm btn-red"   onclick="adminUpdateLeave('${l['LeaveID']}','rejected')"><i class="bx bx-x"></i> ปฏิเสธ</button>
-             </div>`
-          : ''}
-      </div>`;
+      return `<div class="leave-card" style="margin-bottom:10px"><div class="leave-card-icon" style="background:${t.color}22;color:${t.color}"><i class="bx ${t.icon}" style="font-size:22px"></i></div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px"><b>${l['ประเภทการลา']}</b><span class="leave-badge ${st[0]}">${st[1]}</span><span style="font-size:11px;color:var(--text3)">${l['จำนวนวัน']} วัน</span></div><div style="font-size:12px;color:var(--text2)"><i class="bx bx-calendar" style="color:var(--teal)"></i> ${l['วันที่เริ่มลา']} – ${l['วันที่สิ้นสุด']}</div>${isAdmin ? `<div style="font-size:12px;color:var(--text3);margin-top:2px"><i class="bx bxs-user" style="color:var(--blue)"></i> ${l['ชื่อ-สกุล']} (${l['แผนก']})</div>` : ''}<div style="font-size:12px;color:var(--text3);margin-top:3px"><i class="bx bx-message-square-detail"></i> ${l['เหตุผล']}</div>${l['หมายเหตุผู้อนุมัติ'] ? `<div style="font-size:11px;color:var(--red);margin-top:3px"><i class="bx bx-comment-error"></i> หมายเหตุ: ${l['หมายเหตุผู้อนุมัติ']}</div>` : ''}</div>${isAdmin && sts === 'pending' ? `<div style="display:flex;gap:6px;flex-shrink:0;flex-direction:column;align-items:flex-end"><button class="btn btn-sm btn-green" onclick="adminUpdateLeave('${l['LeaveID']}','approved')"><i class="bx bx-check"></i> อนุมัติ</button><button class="btn btn-sm btn-red" onclick="adminUpdateLeave('${l['LeaveID']}','rejected')"><i class="bx bx-x"></i> ปฏิเสธ</button></div>` : ''}</div>`;
     }).join('');
-  } catch {
-    body.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i>โหลดข้อมูลไม่สำเร็จ</div>';
-  }
+  } catch { body.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i>โหลดข้อมูลไม่สำเร็จ</div>'; }
 }
 
 async function submitLeave() {
-  const type      = _val('leaveTypeSelect');
-  const startDate = _val('leaveStartDate');
-  const endDate   = _val('leaveEndDate');
-  const reason    = _val('leaveReason').trim();
+  const type = _val('leaveTypeSelect'), startDate = _val('leaveStartDate'), endDate = _val('leaveEndDate'), reason = _val('leaveReason').trim();
   if (!type || !startDate || !endDate || !reason) { toast('กรุณากรอกข้อมูลให้ครบถ้วน', 'error'); return; }
   if (endDate < startDate) { toast('วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น', 'error'); return; }
   const btn = _q('#leaveModal .btn-purple');
   _btnLoading(btn, 'กำลังส่ง...');
   try {
-    const res = await API.leave.submit({
-      userId: currentUser.uid, userName: currentUser.name, dept: currentUser.dept,
-      type, startDate, endDate, reason,
-      delegate:      _val('leaveDelegate'),
-      delegateEmail: _val('leaveDelegateEmail'),
-    });
+    const res = await API.leave.submit({ userId: currentUser.uid, userName: currentUser.name, dept: currentUser.dept, type, startDate, endDate, reason, delegate: _val('leaveDelegate'), delegateEmail: _val('leaveDelegateEmail') });
     if (res.success) {
       toast(`✅ ${res.message}`, 'success');
       closeModal('leaveModal');
-      ['leaveStartDate', 'leaveEndDate', 'leaveReason', 'leaveDelegate', 'leaveDelegateEmail']
-        .forEach(k => { if (_q(`#${k}`)) _q(`#${k}`).value = ''; });
+      ['leaveStartDate', 'leaveEndDate', 'leaveReason', 'leaveDelegate', 'leaveDelegateEmail'].forEach(k => { if (_q(`#${k}`)) _q(`#${k}`).value = ''; });
       if (_q('#leaveTypeSelect')) _q('#leaveTypeSelect').value = 'ลาป่วย';
       if (_q('#leaveDaysCalc'))   _q('#leaveDaysCalc').textContent = '0 วัน';
       loadLeaveHistory();
@@ -1012,34 +744,19 @@ async function submitLeave() {
 async function adminUpdateLeave(leaveId, status) {
   let note = '';
   if (status === 'rejected') {
-    const r = await Swal.fire({
-      title: 'เหตุผลการปฏิเสธ', input: 'text', inputPlaceholder: 'ระบุเหตุผล (ถ้ามี)',
-      icon: 'question', showCancelButton: true,
-      confirmButtonText: 'ยืนยัน', cancelButtonText: 'ยกเลิก',
-      confirmButtonColor: '#EF5350', cancelButtonColor: '#90A4AE',
-    });
+    const r = await Swal.fire({ title: 'เหตุผลการปฏิเสธ', input: 'text', inputPlaceholder: 'ระบุเหตุผล (ถ้ามี)', icon: 'question', showCancelButton: true, confirmButtonText: 'ยืนยัน', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#EF5350', cancelButtonColor: '#90A4AE' });
     if (!r.isConfirmed) return;
     note = r.value || '';
   } else {
-    const r = await Swal.fire({
-      title: 'ยืนยันการอนุมัติ?', icon: 'question', showCancelButton: true,
-      confirmButtonText: 'อนุมัติ', cancelButtonText: 'ยกเลิก',
-      confirmButtonColor: '#26A69A', cancelButtonColor: '#90A4AE',
-    });
+    const r = await Swal.fire({ title: 'ยืนยันการอนุมัติ?', icon: 'question', showCancelButton: true, confirmButtonText: 'อนุมัติ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#26A69A', cancelButtonColor: '#90A4AE' });
     if (!r.isConfirmed) return;
   }
   Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
   try {
     const res = await API.leave.updateStatus({ leaveId, status, note, approverName: currentUser.name });
     Swal.close();
-    if (res.success) {
-      await Swal.fire({
-        icon: status === 'approved' ? 'success' : 'info',
-        title: status === 'approved' ? '✅ อนุมัติสำเร็จ' : '❌ ปฏิเสธแล้ว',
-        text: res.message, confirmButtonColor: '#26A69A', timer: 2500, showConfirmButton: false,
-      });
-      loadLeaveHistory();
-    } else toast(res.message || 'เกิดข้อผิดพลาด', 'error');
+    if (res.success) { await Swal.fire({ icon: status === 'approved' ? 'success' : 'info', title: status === 'approved' ? '✅ อนุมัติสำเร็จ' : '❌ ปฏิเสธแล้ว', text: res.message, confirmButtonColor: '#26A69A', timer: 2500, showConfirmButton: false }); loadLeaveHistory(); }
+    else toast(res.message || 'เกิดข้อผิดพลาด', 'error');
   } catch { Swal.close(); toast('เกิดข้อผิดพลาด', 'error'); }
 }
 
@@ -1051,106 +768,37 @@ async function loadUsers() {
     const res    = await API.users.getAll();
     const grid   = _q('#usersGrid');
     const active = (res.data || []).filter(u => u.status === 'active');
-    if (!active.length) {
-      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fas fa-users"></i>ยังไม่มีผู้ใช้</div>';
-      return;
-    }
-    const colors = [
-      { bg: 'rgba(38,166,154,.12)',  text: '#00796B' },
-      { bg: 'rgba(174,213,129,.2)',  text: '#558B2F' },
-      { bg: 'rgba(255,202,40,.15)',  text: '#F57F17' },
-      { bg: 'rgba(255,138,101,.15)', text: '#E64A19' },
-    ];
-    grid.innerHTML = active.map((u, i) => {
-      const c = colors[i % 4];
-      return `<div class="user-card">
-        <div class="uc-top">
-          <div class="uc-avatar" style="background:${c.bg};color:${c.text}">${(u.name || '?')[0]}</div>
-          <div style="min-width:0">
-            <div class="uc-name">${u.name}</div>
-            <div class="uc-dept">${u.dept} · ${u.pos || '-'}</div>
-          </div>
-        </div>
-        <div class="uc-meta">
-          <span class="badge ${u.role === 'admin' ? 'b-blue' : 'b-green'}">${u.role === 'admin' ? 'Admin' : 'เจ้าหน้าที่'}</span>
-          <span style="font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;max-width:120px">${u.email}</span>
-        </div>
-        <div class="uc-actions">
-          <button class="btn btn-sm btn-gray" onclick="editUser('${u.uid}','${u.name}','${u.dept}','${u.pos || ''}','${u.email}','${u.role}')">
-            <i class="fas fa-edit"></i> แก้ไข
-          </button>
-          <button class="btn btn-sm btn-red" onclick="confirmDeleteUser('${u.uid}','${u.name}')">
-            <i class="fas fa-trash"></i>
-          </button>
-        </div>
-      </div>`;
-    }).join('');
+    if (!active.length) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fas fa-users"></i>ยังไม่มีผู้ใช้</div>'; return; }
+    const colors = [{ bg: 'rgba(38,166,154,.12)', text: '#00796B' }, { bg: 'rgba(174,213,129,.2)', text: '#558B2F' }, { bg: 'rgba(255,202,40,.15)', text: '#F57F17' }, { bg: 'rgba(255,138,101,.15)', text: '#E64A19' }];
+    grid.innerHTML = active.map((u, i) => { const c = colors[i % 4]; return `<div class="user-card"><div class="uc-top"><div class="uc-avatar" style="background:${c.bg};color:${c.text}">${(u.name || '?')[0]}</div><div style="min-width:0"><div class="uc-name">${u.name}</div><div class="uc-dept">${u.dept} · ${u.pos || '-'}</div></div></div><div class="uc-meta"><span class="badge ${u.role === 'admin' ? 'b-blue' : 'b-green'}">${u.role === 'admin' ? 'Admin' : 'เจ้าหน้าที่'}</span><span style="font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;max-width:120px">${u.email}</span></div><div class="uc-actions"><button class="btn btn-sm btn-gray" onclick="editUser('${u.uid}','${u.name}','${u.dept}','${u.pos || ''}','${u.email}','${u.role}')"><i class="fas fa-edit"></i> แก้ไข</button><button class="btn btn-sm btn-red" onclick="confirmDeleteUser('${u.uid}','${u.name}')"><i class="fas fa-trash"></i></button></div></div>`; }).join('');
   } catch { toast('โหลดผู้ใช้ไม่สำเร็จ', 'error'); }
 }
 
-function showAddUser() {
-  _setText('userModalTitle', 'เพิ่มเจ้าหน้าที่');
-  _q('#editUid').value = '';
-  ['uName', 'uDept', 'uPos', 'uEmail', 'uPass'].forEach(k => _q(`#${k}`).value = '');
-  _q('#uRole').value = 'user';
-  showModal('userModal');
-}
-
-function editUser(uid, name, dept, pos, email, role) {
-  _setText('userModalTitle', 'แก้ไขเจ้าหน้าที่');
-  _q('#editUid').value = uid;
-  _q('#uName').value   = name;
-  _q('#uDept').value   = dept;
-  _q('#uPos').value    = pos;
-  _q('#uEmail').value  = email;
-  _q('#uRole').value   = role;
-  _q('#uPass').value   = '';
-  showModal('userModal');
-}
+function showAddUser() { _setText('userModalTitle', 'เพิ่มเจ้าหน้าที่'); _q('#editUid').value = ''; ['uName', 'uDept', 'uPos', 'uEmail', 'uPass'].forEach(k => _q(`#${k}`).value = ''); _q('#uRole').value = 'user'; showModal('userModal'); }
+function editUser(uid, name, dept, pos, email, role) { _setText('userModalTitle', 'แก้ไขเจ้าหน้าที่'); _q('#editUid').value = uid; _q('#uName').value = name; _q('#uDept').value = dept; _q('#uPos').value = pos; _q('#uEmail').value = email; _q('#uRole').value = role; _q('#uPass').value = ''; showModal('userModal'); }
 
 async function saveUser() {
   const uid = _q('#editUid').value;
   try {
-    const res = await (uid ? API.users.update : API.users.add)({
-      uid,
-      name:     _val('uName'),
-      dept:     _val('uDept'),
-      pos:      _val('uPos'),
-      email:    _val('uEmail'),
-      password: _val('uPass'),
-      role:     _val('uRole'),
-    });
-    if (res.success) {
-      toast(res.message, 'success');
-      closeModal('userModal');
-      API.invalidate('users_list');
-      loadUsers();
-    } else toast(res.message, 'error');
-  } catch { toast('เกิดข้อผิดพลาด', 'error'); }
-}
-
-async function confirmDeleteUser(uid, name) {
-  const r = await Swal.fire({
-    title: `ลบ "${name}"?`, text: 'ผู้ใช้จะถูกตั้งสถานะเป็น inactive',
-    icon: 'warning', showCancelButton: true,
-    confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก',
-    confirmButtonColor: '#EF5350', cancelButtonColor: '#90A4AE',
-  });
-  if (!r.isConfirmed) return;
-  try {
-    const res = await API.users.delete({ uid });
-    if (res.success) { toast('ลบผู้ใช้สำเร็จ', 'success'); API.invalidate('users_list'); loadUsers(); }
+    const res = await (uid ? API.users.update : API.users.add)({ uid, name: _val('uName'), dept: _val('uDept'), pos: _val('uPos'), email: _val('uEmail'), password: _val('uPass'), role: _val('uRole') });
+    if (res.success) { toast(res.message, 'success'); closeModal('userModal'); API.invalidate('users_list'); loadUsers(); }
     else toast(res.message, 'error');
   } catch { toast('เกิดข้อผิดพลาด', 'error'); }
 }
 
+async function confirmDeleteUser(uid, name) {
+  const r = await Swal.fire({ title: `ลบ "${name}"?`, text: 'ผู้ใช้จะถูกตั้งสถานะเป็น inactive', icon: 'warning', showCancelButton: true, confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#EF5350', cancelButtonColor: '#90A4AE' });
+  if (!r.isConfirmed) return;
+  try { const res = await API.users.delete({ uid }); if (res.success) { toast('ลบผู้ใช้สำเร็จ', 'success'); API.invalidate('users_list'); loadUsers(); } else toast(res.message, 'error'); } catch { toast('เกิดข้อผิดพลาด', 'error'); }
+}
+
 /* ════════════════════════════════════════
-   PDF PRINT
+   PDF PRINT — ทั้ง 3 ฟังก์ชัน
    ════════════════════════════════════════ */
 function openDailyPdfModal() {
-  _q('#pdfPreview').style.display  = 'none';
-  _q('#pdfEmpty').style.display    = 'none';
-  _q('#btnDoPrint').style.display  = 'none';
+  _q('#pdfPreview').style.display   = 'none';
+  _q('#pdfEmpty').style.display     = 'none';
+  _q('#btnDoPrint').style.display   = 'none';
   _q('#pdfPreviewContent').innerHTML = '';
   dailyPdfData = [];
   showModal('pdfModal');
@@ -1174,105 +822,64 @@ async function loadDailyPdfPreview() {
     _q('#pdfEmpty').style.display   = 'none';
     _q('#pdfPreview').style.display = 'block';
     _q('#btnDoPrint').style.display = 'inline-flex';
-    // preview ใช้ URL ปกติ (ไม่ต้อง base64 ก็ได้ เพราะแค่ดู)
-    _q('#pdfPreviewContent').innerHTML = _buildPdfHtml(dailyPdfData, thaiDate, window.LOGO_URL || null);
+    // preview ใช้ URL ปกติ (ไม่ต้องรอ base64)
+    _q('#pdfPreviewContent').innerHTML = _buildPdfHtml(dailyPdfData, thaiDate, null);
   } catch { toast('เกิดข้อผิดพลาด', 'error'); }
 }
 
-/* ── doPrintPdf: await logo base64 ก่อนพิมพ์ ─────────────── */
-// ✅ แก้เป็น async + รอ logo
+/* ── 1. พิมพ์รายงานประจำวัน ────────────────────────────── */
 async function doPrintPdf() {
-  if (!dailyPdfData.length) { toast('ไม่มีข้อมูลสำหรับพิมพ์','error'); return; }
-  var btn = id('btnDoPrint');
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังเตรียม...'; btn.disabled = true;
-  var _parts = id('pdfDate').value.split('-');
-  var _thaiDate = _parts[2] + '/' + _parts[1] + '/' + _parts[0];
-  var logoB64 = await _getLogoBase64();
-  _doPrint(buildPdfHtml(dailyPdfData, _thaiDate, logoB64), 'รายงานประจำวัน');
-  btn.innerHTML = '<i class="fas fa-print"></i> พิมพ์ / บันทึก PDF'; btn.disabled = false;
+  if (!dailyPdfData.length) { toast('ไม่มีข้อมูลสำหรับพิมพ์', 'error'); return; }
+  const btn = _q('#btnDoPrint');
+  _btnLoading(btn, 'กำลังเตรียม...');
+  try {
+    const [y, m, d] = (_q('#pdfDate').value || '').split('-');
+    const logoB64   = await _getLogoBase64();
+    _doPrint(_buildPdfHtml(dailyPdfData, `${d}/${m}/${y}`, logoB64), 'รายงานประจำวัน');
+  } finally {
+    _btnReset(btn, '<i class="fas fa-print"></i> พิมพ์ / บันทึก PDF');
+  }
 }
 
-/* ── printReportTable: await logo base64 ─────────────────── */
+/* ── 2. พิมพ์รายงานทั้งหมด ─────────────────────────────── */
 async function printReportTable() {
-  if (!allReportData.length) { toast('กรุณาค้นหาข้อมูลก่อน','error'); return; }
-  var logoB64 = await _getLogoBase64();
-  var _logoTag = '<img src="' + logoB64 + '" style="width:60px;height:auto;display:block;margin:0 auto 8px" onerror="this.style.display=\'none\'">';
+  if (!allReportData.length) { toast('กรุณาค้นหาข้อมูลก่อน', 'error'); return; }
+  const logoB64  = await _getLogoBase64();
+  const logoHtml = logoB64
+    ? `<img src="${logoB64}" style="height:64px;width:auto;display:block;margin:0 auto 10px" alt="logo">`
+    : '';
   const rows = allReportData.map(r => {
-    const lm    = parseInt(r['นาทีสาย (เข้า)']) || 0;
+    const lm = parseInt(r['นาทีสาย (เข้า)']) || 0;
     const inSt  = r['สถานะเข้า'] || '-';
     const outSt = r['สถานะออก']  || '-';
-    return `<tr>
-      <td>${r['วันที่'] || '-'}</td>
-      <td style="text-align:left">${r['ชื่อ-สกุล'] || '-'}</td>
-      <td>${r['แผนก'] || '-'}</td>
-      <td>${r['เวลาเข้างาน'] || '-'}</td>
-      <td class="${lm > 0 ? 'late-cell' : 'ok-cell'}">${inSt}</td>
-      <td>${lm}</td>
-      <td>${r['เวลาออกงาน'] || '-'}</td>
-      <td class="${outSt === 'ออกก่อน' ? 'late-cell' : outSt === 'ตรงเวลา' ? 'ok-cell' : ''}">${outSt}</td>
-      <td style="text-align:left">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td>
-    </tr>`;
+    return `<tr><td>${r['วันที่'] || '-'}</td><td style="text-align:left">${r['ชื่อ-สกุล'] || '-'}</td><td>${r['แผนก'] || '-'}</td><td>${r['เวลาเข้างาน'] || '-'}</td><td class="${lm > 0 ? 'late-cell' : 'ok-cell'}">${inSt}</td><td>${lm}</td><td>${r['เวลาออกงาน'] || '-'}</td><td class="${outSt === 'ออกก่อน' ? 'late-cell' : outSt === 'ตรงเวลา' ? 'ok-cell' : ''}">${outSt}</td><td style="text-align:left">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td></tr>`;
   }).join('');
-  const content = `<div style="font-family:Sarabun,sans-serif;font-size:13px">
-    <div style="text-align:center;margin-bottom:16px;border-bottom:1px solid #ddd;padding-bottom:10px">
-      ${logoHtml}
-      <div style="font-size:16px;font-weight:700;color:#263238">รายงานการปฏิบัติงาน Work From Home</div>
-      <div style="font-size:12px;color:#546E7A">
-        ทั้งหมด: ${allReportData.length} | ตรงเวลา: ${_rptStats.ontime} | สาย: ${_rptStats.late} | ออกก่อน: ${_rptStats.early}
-      </div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead>
-        <tr>
-          <th style="background:#263238;color:white;padding:7px 8px">วันที่</th>
-          <th style="background:#263238;color:white;padding:7px 8px;text-align:left">ชื่อ-สกุล</th>
-          <th style="background:#263238;color:white;padding:7px 8px">กลุ่ม</th>
-          <th style="background:#263238;color:white;padding:7px 8px">เวลาเข้า</th>
-          <th style="background:#263238;color:white;padding:7px 8px">สถานะ</th>
-          <th style="background:#263238;color:white;padding:7px 8px">สาย(น.)</th>
-          <th style="background:#263238;color:white;padding:7px 8px">เวลาออก</th>
-          <th style="background:#263238;color:white;padding:7px 8px">สถานะออก</th>
-          <th style="background:#263238;color:white;padding:7px 8px;text-align:left">ภารกิจ</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>`;
+  const content = `<div style="font-family:Sarabun,sans-serif;font-size:13px"><div style="text-align:center;margin-bottom:16px;border-bottom:1px solid #ddd;padding-bottom:12px">${logoHtml}<div style="font-size:16px;font-weight:700;color:#263238">รายงานการปฏิบัติงาน Work From Home</div><div style="font-size:12px;color:#546E7A">ทั้งหมด: ${allReportData.length} | ตรงเวลา: ${_rptStats.ontime} | สาย: ${_rptStats.late} | ออกก่อน: ${_rptStats.early}</div></div><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th style="background:#263238;color:white;padding:7px 8px">วันที่</th><th style="background:#263238;color:white;padding:7px 8px;text-align:left">ชื่อ-สกุล</th><th style="background:#263238;color:white;padding:7px 8px">กลุ่ม</th><th style="background:#263238;color:white;padding:7px 8px">เวลาเข้า</th><th style="background:#263238;color:white;padding:7px 8px">สถานะ</th><th style="background:#263238;color:white;padding:7px 8px">สาย(น.)</th><th style="background:#263238;color:white;padding:7px 8px">เวลาออก</th><th style="background:#263238;color:white;padding:7px 8px">สถานะออก</th><th style="background:#263238;color:white;padding:7px 8px;text-align:left">ภารกิจ</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   _doPrint(content, 'รายงานการลงเวลา');
 }
 
-/* ── printMonthlyReport: await logo base64 ───────────────── */
+/* ── 3. พิมพ์รายงานรายเดือน ────────────────────────────── */
 async function printMonthlyReport() {
   const bodyEl = _q('#monthlyReportBody');
-  if (!bodyEl?.innerHTML || bodyEl.innerHTML.includes('fa-spinner')) {
-    toast('กรุณาโหลดข้อมูลก่อน', 'error');
-    return;
-  }
-   var logoB64 = await _getLogoBase64();
-  var _logoTag = '<img src="' + logoB64 + '" style="width:60px;height:auto;display:block;margin:0 auto 8px" onerror="this.style.display=\'none\'">';
+  if (!bodyEl?.innerHTML || bodyEl.innerHTML.includes('fa-spinner')) { toast('กรุณาโหลดข้อมูลก่อน', 'error'); return; }
+  const logoB64  = await _getLogoBase64();
+  const logoHtml = logoB64
+    ? `<img src="${logoB64}" style="height:64px;width:auto;display:block;margin:0 auto 10px" alt="logo">`
+    : '';
   _doPrint(
-    `<div style="font-family:Sarabun,sans-serif">
-       <div style="text-align:center;margin-bottom:16px">${logoHtml}</div>
-       ${bodyEl.innerHTML}
-     </div>`,
+    `<div style="font-family:Sarabun,sans-serif"><div style="text-align:center;margin-bottom:16px">${logoHtml}</div>${bodyEl.innerHTML}</div>`,
     'รายงานรายเดือน'
   );
 }
 
 /* ════════════════════════════════════════
-   _buildPdfHtml — รับ logoB64 เป็น param
+   _buildPdfHtml — รายงานประจำวัน
+   logoB64: string|null — ถ้า null จะไม่แสดงโลโก้
    ════════════════════════════════════════ */
-function _buildPdfHtml(data, dateLabel, logoB64 = null) {
-    var _logo = logoSrc || 'https://lh3.googleusercontent.com/d/1tEuBft9_e3q6Q79o6vHI_HMRaL2hSNB3';
-  // ใช้ base64 ถ้ามี, fallback LOGO_URL, ถ้าไม่มีเลยซ่อน
-  const logoSrc  = logoB64 || window.LOGO_URL || null;
-   const logoHtml = logoSrc
-  ? `<img src="${logoSrc}"
-          alt="logo"
-          crossorigin="anonymous"
-          style="height:64px;width:auto;object-fit:contain;display:block;margin:0 auto 8px"
-          onerror="this.style.display='none'">`
-  : '';
+function _buildPdfHtml(data, dateLabel, logoB64) {
+  const logoHtml = logoB64
+    ? `<img src="${logoB64}" style="height:64px;width:auto;display:block;margin:0 auto 10px" alt="logo">`
+    : '';
 
   const s1n = _q('#signerName1')?.value || '..................................';
   const s1p = _q('#signerPos1')?.value  || '(ผู้ตรวจสอบ)';
@@ -1287,69 +894,45 @@ function _buildPdfHtml(data, dateLabel, logoB64 = null) {
     if (inSt === 'ตรงเวลา') ontime++;
     if (inSt === 'สาย')     late++;
     if (outSt === 'ออกก่อน') earlyOut++;
-    return `<tr>
-      <td style="text-align:center">${i + 1}</td>
-      <td style="text-align:left">${r['ชื่อ-สกุล'] || '-'}</td>
-      <td>${r['แผนก'] || '-'}</td>
-      <td>${r['เวลาเข้างาน'] || '-'}</td>
-      <td class="${lm > 0 ? 'late-cell' : 'ok-cell'}">${lm > 0 ? 'สาย ' + lm + ' น.' : 'ตรงเวลา'}</td>
-      <td>${r['เวลาออกงาน'] || '-'}</td>
-      <td class="${outSt === 'ออกก่อน' ? 'late-cell' : outSt === 'ตรงเวลา' ? 'ok-cell' : ''}">${outSt}</td>
-      <td style="text-align:left;font-size:11px">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td>
-    </tr>`;
+    return `<tr><td style="text-align:center">${i + 1}</td><td style="text-align:left">${r['ชื่อ-สกุล'] || '-'}</td><td>${r['แผนก'] || '-'}</td><td>${r['เวลาเข้างาน'] || '-'}</td><td class="${lm > 0 ? 'late-cell' : 'ok-cell'}">${lm > 0 ? 'สาย ' + lm + ' น.' : 'ตรงเวลา'}</td><td>${r['เวลาออกงาน'] || '-'}</td><td class="${outSt === 'ออกก่อน' ? 'late-cell' : outSt === 'ตรงเวลา' ? 'ok-cell' : ''}">${outSt}</td><td style="text-align:left;font-size:11px">${r['ภารกิจ/ผลงาน (เข้า)'] || '-'}</td></tr>`;
   }).join('');
 
   return `<div style="font-family:Sarabun,sans-serif;font-size:13px">
-    <!-- หัวรายงาน -->
     <div style="text-align:center;margin-bottom:14px;border-bottom:1px solid #ddd;padding-bottom:12px">
       ${logoHtml}
       <div style="font-size:16px;font-weight:700;color:#263238">WFH System</div>
       <div style="font-size:14px;font-weight:600;margin:4px 0">รายงานการปฏิบัติงาน Work From Home</div>
       <div style="font-size:12px;color:#546E7A">ประจำวันที่ ${dateLabel}</div>
     </div>
-    <!-- สรุปตัวเลข -->
     <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;justify-content:center">
       <span style="background:#e8f5e9;padding:3px 12px;border-radius:18px;font-size:11px;font-weight:600;color:#388E3C">ตรงเวลา: ${ontime}</span>
       <span style="background:#ffebee;padding:3px 12px;border-radius:18px;font-size:11px;font-weight:600;color:#C62828">มาสาย: ${late}</span>
       <span style="background:#fff3e0;padding:3px 12px;border-radius:18px;font-size:11px;font-weight:600;color:#E64A19">ออกก่อน: ${earlyOut}</span>
       <span style="background:#e3f2fd;padding:3px 12px;border-radius:18px;font-size:11px;font-weight:600;color:#0288D1">รวม: ${data.length}</span>
     </div>
-    <!-- ตาราง -->
     <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead>
-        <tr>
-          <th style="background:#263238;color:white;padding:6px 8px;width:35px">#</th>
-          <th style="background:#263238;color:white;padding:6px 8px;text-align:left">ชื่อ-สกุล</th>
-          <th style="background:#263238;color:white;padding:6px 8px">กลุ่ม</th>
-          <th style="background:#263238;color:white;padding:6px 8px">เวลาเข้า</th>
-          <th style="background:#263238;color:white;padding:6px 8px">สถานะเข้า</th>
-          <th style="background:#263238;color:white;padding:6px 8px">เวลาออก</th>
-          <th style="background:#263238;color:white;padding:6px 8px">สถานะออก</th>
-          <th style="background:#263238;color:white;padding:6px 8px;text-align:left">ภารกิจ</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th style="background:#263238;color:white;padding:6px 8px;width:35px">#</th>
+        <th style="background:#263238;color:white;padding:6px 8px;text-align:left">ชื่อ-สกุล</th>
+        <th style="background:#263238;color:white;padding:6px 8px">กลุ่ม</th>
+        <th style="background:#263238;color:white;padding:6px 8px">เวลาเข้า</th>
+        <th style="background:#263238;color:white;padding:6px 8px">สถานะเข้า</th>
+        <th style="background:#263238;color:white;padding:6px 8px">เวลาออก</th>
+        <th style="background:#263238;color:white;padding:6px 8px">สถานะออก</th>
+        <th style="background:#263238;color:white;padding:6px 8px;text-align:left">ภารกิจ</th>
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <!-- ลายเซ็น -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:36px">
-      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555">
-        <div style="height:56px"></div>
-        (${currentUser?.name || ''})<br>ผู้จัดทำ
-      </div>
-      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555">
-        <div style="height:56px"></div>
-        (${s1n})<br>${s1p}
-      </div>
-      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555">
-        <div style="height:56px"></div>
-        (${s2n})<br>${s2p}
-      </div>
+      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555"><div style="height:56px"></div>(${currentUser?.name || ''})<br>ผู้จัดทำ</div>
+      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555"><div style="height:56px"></div>(${s1n})<br>${s1p}</div>
+      <div style="text-align:center;border-top:1.5px solid #888;padding-top:6px;font-size:12px;color:#555"><div style="height:56px"></div>(${s2n})<br>${s2p}</div>
     </div>
   </div>`;
 }
 
 /* ════════════════════════════════════════
-   _doPrint — รอ image โหลดใน iframe ก่อน print
+   _doPrint — สร้าง iframe แล้วพิมพ์
    ════════════════════════════════════════ */
 function _doPrint(contentHtml, title) {
   const css = `
@@ -1366,81 +949,46 @@ function _doPrint(contentHtml, title) {
       body  { margin: 0; }
     }
   `;
-  const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${title}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
-  <style>${css}</style>
-</head>
-<body>
-  ${contentHtml}
-  <script>
+  // script ใน iframe: รอรูปโหลดแล้วค่อย print
+  const printScript = `
     window.onload = function () {
-      // รอ font + รูปภาพโหลดเสร็จก่อน print
       var imgs = Array.from(document.images);
-      var pending = imgs.filter(function(img){ return !img.complete; });
-      if (pending.length === 0) {
+      var pending = imgs.filter(function(i){ return !i.complete; });
+      if (!pending.length) {
         document.fonts.ready.then(function(){ setTimeout(function(){ window.focus(); window.print(); }, 400); });
         return;
       }
-      var loaded = 0;
-      function tryPrint() {
-        loaded++;
-        if (loaded >= pending.length) {
-          document.fonts.ready.then(function(){ setTimeout(function(){ window.focus(); window.print(); }, 400); });
-        }
-      }
-      pending.forEach(function(img){ img.onload = tryPrint; img.onerror = tryPrint; });
+      var done = 0;
+      function tryPrint(){ if (++done >= pending.length) document.fonts.ready.then(function(){ setTimeout(function(){ window.focus(); window.print(); }, 400); }); }
+      pending.forEach(function(i){ i.onload = tryPrint; i.onerror = tryPrint; });
     };
-  <\/script>
-</body>
-</html>`;
+  `;
+  const fullHtml = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><title>${title}</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<style>${css}</style>
+</head><body>
+${contentHtml}
+<script>${printScript}<\/script>
+</body></html>`;
 
   try {
     const blob    = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
-
-    // ลบ iframe เก่าทิ้ง
     let pf = document.getElementById('_printFrame');
     if (pf) document.body.removeChild(pf);
-
     pf = document.createElement('iframe');
     pf.id = '_printFrame';
     pf.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1200px;height:800px;border:none;opacity:0;pointer-events:none;';
     document.body.appendChild(pf);
-
-    pf.onload = () => {
-      // รอ image ใน iframe โหลดด้วย (กรณี base64 ควรโหลดทันที)
-      const iframeDoc = pf.contentDocument || pf.contentWindow?.document;
-      if (!iframeDoc) { window.open(blobUrl, '_blank'); return; }
-      const imgs     = Array.from(iframeDoc.images);
-      const waitAll  = imgs.map(img =>
-        img.complete
-          ? Promise.resolve()
-          : new Promise(r => { img.onload = r; img.onerror = r; })
-      );
-      Promise.all(waitAll).then(() => {
-        setTimeout(() => {
-          try { pf.contentWindow.focus(); pf.contentWindow.print(); }
-          catch { window.open(blobUrl, '_blank'); }
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
-        }, 300);
-      });
-    };
-
     pf.src = blobUrl;
+    // ไม่ต้องทำอะไรใน onload เพราะ script ใน iframe จัดการเอง
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
   } catch {
-    // fallback: เปิด window ใหม่
     const pw = window.open('', '_blank');
-    if (pw) {
-      pw.document.write(fullHtml);
-      pw.document.close();
-      setTimeout(() => { pw.focus(); pw.print(); }, 1000);
-    } else {
-      toast('กรุณาอนุญาต Popup เพื่อพิมพ์', 'error');
-    }
+    if (pw) { pw.document.write(fullHtml); pw.document.close(); setTimeout(() => { pw.focus(); pw.print(); }, 1000); }
+    else toast('กรุณาอนุญาต Popup เพื่อพิมพ์', 'error');
   }
 }
 
@@ -1459,15 +1007,9 @@ function closeModal(id) { document.getElementById(id)?.classList.remove('show');
 
 function badge(status) {
   if (!status || status === '-' || status === '') return '<span class="badge b-gray">-</span>';
-  const map = {
-    'ตรงเวลา': ['b-green',  'fas fa-check'],
-    'สาย':     ['b-red',    'fas fa-clock'],
-    'ออกก่อน': ['b-orange', 'fas fa-exclamation'],
-  };
+  const map = { 'ตรงเวลา': ['b-green', 'fas fa-check'], 'สาย': ['b-red', 'fas fa-clock'], 'ออกก่อน': ['b-orange', 'fas fa-exclamation'] };
   const m = map[status];
-  return m
-    ? `<span class="badge ${m[0]}"><i class="${m[1]}"></i> ${status}</span>`
-    : `<span class="badge b-gray">${status}</span>`;
+  return m ? `<span class="badge ${m[0]}"><i class="${m[1]}"></i> ${status}</span>` : `<span class="badge b-gray">${status}</span>`;
 }
 
 function toast(msg, type = 'info') {
@@ -1478,13 +1020,8 @@ function toast(msg, type = 'info') {
   item.className = `toast-item ${type}`;
   item.innerHTML = `<i class="fas ${icons[type] || 'fa-info-circle'}"></i> ${msg}`;
   c.appendChild(item);
-  setTimeout(() => {
-    item.style.animation = 'fadeOut .3s ease forwards';
-    setTimeout(() => item.remove(), 300);
-  }, 3700);
+  setTimeout(() => { item.style.animation = 'fadeOut .3s ease forwards'; setTimeout(() => item.remove(), 300); }, 3700);
 }
-
-// expose globally so camera.js can call
 window.toast = toast;
 
 function skeletonRows(cols, count = 5) {
@@ -1494,36 +1031,19 @@ function skeletonRows(cols, count = 5) {
 
 function _startClock() {
   setInterval(() => {
-    const n  = new Date();
-    const el = document.getElementById('liveClock');
-    if (el) el.textContent = [n.getHours(), n.getMinutes(), n.getSeconds()]
-      .map(x => String(x).padStart(2, '0')).join(':');
+    const n = new Date(), el = document.getElementById('liveClock');
+    if (el) el.textContent = [n.getHours(), n.getMinutes(), n.getSeconds()].map(x => String(x).padStart(2, '0')).join(':');
   }, 1000);
 }
-
 function _updateDate() {
   const d = new Date();
   _setText('pageDate',   d.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
   _setText('topbarDate', d.toLocaleDateString('th-TH'));
 }
-
 const _todayISO = () => new Date().toISOString().substring(0, 10);
-const _todayYM  = () => {
-  const n = new Date();
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
-};
-
-function _btnLoading(btn, msg = 'กำลังโหลด...') {
-  if (!btn) return;
-  btn._orig    = btn.innerHTML;
-  btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${msg}`;
-  btn.disabled  = true;
-}
-function _btnReset(btn, html) {
-  if (!btn) return;
-  btn.innerHTML = html || btn._orig || '';
-  btn.disabled  = false;
-}
+const _todayYM  = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`; };
+function _btnLoading(btn, msg = 'กำลังโหลด...') { if (!btn) return; btn._orig = btn.innerHTML; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${msg}`; btn.disabled = true; }
+function _btnReset(btn, html) { if (!btn) return; btn.innerHTML = html || btn._orig || ''; btn.disabled = false; }
 
 /* ════════════════════════════════════════
    EVENT LISTENERS
@@ -1542,9 +1062,5 @@ document.querySelectorAll('.modal-overlay').forEach(o =>
 );
 
 let _resizeTimer;
-window.addEventListener('resize', () => {
-  clearTimeout(_resizeTimer);
-  _resizeTimer = setTimeout(resizeSigPads, 250);
-});
-
+window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(resizeSigPads, 250); });
 window.addEventListener('beforeunload', () => Camera.stopAll());
