@@ -1183,9 +1183,11 @@ async function doPrintPdf() {
 async function printReportTable() {
   if (!allReportData.length) { toast('กรุณาค้นหาข้อมูลก่อน', 'error'); return; }
   const logoB64 = await _getLogoBase64();
-  const logoHtml = logoB64
-    ? `<img src="${logoB64}" alt="logo" style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 6px">`
-    : '';
+ const logoHtml = logoB64
+  ? `<img src="${logoB64}" alt="logo" crossorigin="anonymous"
+          style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 6px"
+          onerror="this.style.display='none'">`
+  : '';
   const rows = allReportData.map(r => {
     const lm    = parseInt(r['นาทีสาย (เข้า)']) || 0;
     const inSt  = r['สถานะเข้า'] || '-';
@@ -1239,8 +1241,10 @@ async function printMonthlyReport() {
   }
   const logoB64  = await _getLogoBase64();
   const logoHtml = logoB64
-    ? `<img src="${logoB64}" alt="logo" style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 10px">`
-    : '';
+  ? `<img src="${logoB64}" alt="logo" crossorigin="anonymous"
+          style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 10px"
+          onerror="this.style.display='none'">`
+  : '';
   _doPrint(
     `<div style="font-family:Sarabun,sans-serif">
        <div style="text-align:center;margin-bottom:16px">${logoHtml}</div>
@@ -1256,11 +1260,13 @@ async function printMonthlyReport() {
 function _buildPdfHtml(data, dateLabel, logoB64 = null) {
   // ใช้ base64 ถ้ามี, fallback LOGO_URL, ถ้าไม่มีเลยซ่อน
   const logoSrc  = logoB64 || window.LOGO_URL || null;
-  const logoHtml = logoSrc
-    ? `<img src="${logoSrc}"
-            alt="logo"
-            style="height:64px;width:auto;object-fit:contain;display:block;margin:0 auto 8px">`
-    : '';
+   const logoHtml = logoSrc
+  ? `<img src="${logoSrc}"
+          alt="logo"
+          crossorigin="anonymous"
+          style="height:64px;width:auto;object-fit:contain;display:block;margin:0 auto 8px"
+          onerror="this.style.display='none'">`
+  : '';
 
   const s1n = _q('#signerName1')?.value || '..................................';
   const s1p = _q('#signerPos1')?.value  || '(ผู้ตรวจสอบ)';
