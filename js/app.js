@@ -37,19 +37,27 @@ async function _getLogoBase64() {
   const url = window.LOGO_URL;
   if (!url) return null;
   try {
-    const res  = await fetch(url, { cache: 'force-cache' });
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload  = () => { _logoB64Cache = reader.result; resolve(reader.result); };
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
+    const b64 = await new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'blob';
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          const reader = new FileReader();
+          reader.onload  = e => { _logoB64Cache = e.target.result; resolve(e.target.result); };
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(xhr.response);
+        } else resolve(null);
+      };
+      xhr.onerror = () => resolve(null);
+      xhr.send();
     });
-  } catch {
-    return null;
-  }
+    if (b64) return b64;
+  } catch {}
+
+  return null;
 }
+
 
 /* ════════════════════════════════════════
    INIT
