@@ -22,6 +22,7 @@ let attachments    = [];
 let dailyPdfData   = [];
 let _logoB64Cache  = null;   // ← cache รูป logo เป็น base64
 
+
 const RPT_PER_PAGE = 15;
 
 /* ════════════════════════════════════════
@@ -34,15 +35,13 @@ const RPT_PER_PAGE = 15;
  */
 async function _getLogoBase64() {
   if (_logoB64Cache) return _logoB64Cache;
-  const url = window.LOGO_URL;
-  if (!url) return null;
-
-  // วิธีที่ 1: fetch ปกติ
+  const url = 'https://lh3.googleusercontent.com/d/1tEuBft9_e3q6Q79o6vHI_HMRaL2hSNB3';
+  // วิธีที่ 1: fetch
   try {
     const res = await fetch(url, { cache: 'force-cache' });
     if (res.ok) {
       const blob = await res.blob();
-      const b64 = await new Promise((resolve) => {
+      const b64 = await new Promise(resolve => {
         const reader = new FileReader();
         reader.onload  = () => { _logoB64Cache = reader.result; resolve(reader.result); };
         reader.onerror = () => resolve(null);
@@ -51,10 +50,9 @@ async function _getLogoBase64() {
       if (b64) return b64;
     }
   } catch {}
-
-  // วิธีที่ 2: XMLHttpRequest fallback
+  // วิธีที่ 2: XHR fallback
   try {
-    const b64 = await new Promise((resolve) => {
+    const b64 = await new Promise(resolve => {
       const xhr = new XMLHttpRequest();
       xhr.open('GET', url, true);
       xhr.responseType = 'blob';
@@ -71,11 +69,9 @@ async function _getLogoBase64() {
     });
     if (b64) return b64;
   } catch {}
-
-  // วิธีที่ 3: คืน URL ตรงๆ เป็น fallback สุดท้าย
+  // วิธีที่ 3: คืน URL ตรงๆ เป็น fallback
   return url;
 }
-
 
 /* ════════════════════════════════════════
    INIT
@@ -1184,28 +1180,23 @@ async function loadDailyPdfPreview() {
 }
 
 /* ── doPrintPdf: await logo base64 ก่อนพิมพ์ ─────────────── */
+// ✅ แก้เป็น async + รอ logo
 async function doPrintPdf() {
-  if (!dailyPdfData.length) { toast('ไม่มีข้อมูลสำหรับพิมพ์', 'error'); return; }
-  const btn = _q('#btnDoPrint');
-  _btnLoading(btn, 'กำลังเตรียม...');
-  try {
-    const [y, m, d] = (_q('#pdfDate').value || '').split('-');
-    const logoB64   = await _getLogoBase64();
-    _doPrint(_buildPdfHtml(dailyPdfData, `${d}/${m}/${y}`, logoB64), 'รายงานประจำวัน');
-  } finally {
-    _btnReset(btn, '<i class="fas fa-print"></i> พิมพ์ / บันทึก PDF');
-  }
+  if (!dailyPdfData.length) { toast('ไม่มีข้อมูลสำหรับพิมพ์','error'); return; }
+  var btn = id('btnDoPrint');
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังเตรียม...'; btn.disabled = true;
+  var _parts = id('pdfDate').value.split('-');
+  var _thaiDate = _parts[2] + '/' + _parts[1] + '/' + _parts[0];
+  var logoB64 = await _getLogoBase64();
+  _doPrint(buildPdfHtml(dailyPdfData, _thaiDate, logoB64), 'รายงานประจำวัน');
+  btn.innerHTML = '<i class="fas fa-print"></i> พิมพ์ / บันทึก PDF'; btn.disabled = false;
 }
 
 /* ── printReportTable: await logo base64 ─────────────────── */
 async function printReportTable() {
-  if (!allReportData.length) { toast('กรุณาค้นหาข้อมูลก่อน', 'error'); return; }
-  const logoB64 = await _getLogoBase64();
- const logoHtml = logoB64
-  ? `<img src="${logoB64}" alt="logo" crossorigin="anonymous"
-          style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 6px"
-          onerror="this.style.display='none'">`
-  : '';
+  if (!allReportData.length) { toast('กรุณาค้นหาข้อมูลก่อน','error'); return; }
+  var logoB64 = await _getLogoBase64();
+  var _logoTag = '<img src="' + logoB64 + '" style="width:60px;height:auto;display:block;margin:0 auto 8px" onerror="this.style.display=\'none\'">';
   const rows = allReportData.map(r => {
     const lm    = parseInt(r['นาทีสาย (เข้า)']) || 0;
     const inSt  = r['สถานะเข้า'] || '-';
