@@ -36,6 +36,23 @@ async function _getLogoBase64() {
   if (_logoB64Cache) return _logoB64Cache;
   const url = window.LOGO_URL;
   if (!url) return null;
+
+  // วิธีที่ 1: fetch ปกติ
+  try {
+    const res = await fetch(url, { cache: 'force-cache' });
+    if (res.ok) {
+      const blob = await res.blob();
+      const b64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload  = () => { _logoB64Cache = reader.result; resolve(reader.result); };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+      if (b64) return b64;
+    }
+  } catch {}
+
+  // วิธีที่ 2: XMLHttpRequest fallback
   try {
     const b64 = await new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
@@ -55,7 +72,8 @@ async function _getLogoBase64() {
     if (b64) return b64;
   } catch {}
 
-  return null;
+  // วิธีที่ 3: คืน URL ตรงๆ เป็น fallback สุดท้าย
+  return url;
 }
 
 
