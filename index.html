@@ -21,7 +21,9 @@
 
   <!-- ─── GAS Endpoint (แก้ตรงนี้จุดเดียว) ─────────────── -->
   <script>
-    window.GAS_URL = 'https://script.google.com/macros/s/AKfycbz08qLAI6SWeGzx4IKLnt5c4XABi5MYZWHCmlBsoX36XDIJaY0K7Z0HGvB9V-jY4J2WqA/exec'; // นำลิงก์ URL มาใส่นะครับ
+    window.GAS_URL = 'https://script.google.com/macros/s/AKfycbz08qLAI6SWeGzx4IKLnt5c4XABi5MYZWHCmlBsoX36XDIJaY0K7Z0HGvB9V-jY4J2WqA/exec';
+    // โลโก้สำหรับพิมพ์ PDF (raw URL จาก GitHub)
+    window.LOGO_URL = 'https://raw.githubusercontent.com/PHARMSUITSUPPORT/WFH69/main/logo%20en.png';
   </script>
 
   <style>
@@ -219,7 +221,7 @@
     .checkin-grid > * { min-width:0; max-width:100%; overflow:hidden; }
 
     /* ════════════════════════════════════════════════════
-       CAMERA — Full rework for cross-browser support
+       CAMERA
        ════════════════════════════════════════════════════ */
     .camera-wrap {
       position: relative;
@@ -234,7 +236,6 @@
       max-height: 300px;
       width: 100%;
     }
-    /* ── Placeholder ── */
     .camera-placeholder {
       text-align: center;
       color: var(--text3);
@@ -243,13 +244,12 @@
     }
     .camera-placeholder i { font-size:36px; margin-bottom:10px; opacity:.35; display:block; }
     .camera-placeholder p { font-size:13px; }
-    /* ── Video / Canvas / Img ── */
     .cam-video {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
       object-fit: cover;
       display: none;
-      transform: scaleX(-1);   /* mirror สำหรับ front camera */
+      transform: scaleX(-1);
     }
     .cam-img {
       position: absolute; inset: 0;
@@ -257,7 +257,6 @@
       object-fit: cover;
       display: none;
     }
-    /* ── LIVE badge ── */
     .cam-live-badge {
       position: absolute; top:10px; left:10px; z-index:5;
       background: rgba(239,83,80,.85); color: white;
@@ -266,8 +265,6 @@
       display: none; align-items:center; gap:5px;
     }
     .cam-live-dot { width:6px; height:6px; border-radius:50%; background:white; animation:pulse .9s infinite; }
-
-    /* ── PRIMARY section (file input / mobile camera) ── */
     .cam-primary-section { margin-top:10px; }
     .cam-primary-section input[type=file] { display:none; }
     .cam-capture-label {
@@ -283,8 +280,6 @@
     .cam-capture-label.orange-grad { background:linear-gradient(135deg,var(--orange-d),var(--orange)); box-shadow:0 4px 14px rgba(255,138,101,.35); }
     .cam-retake-row { display:none; align-items:center; gap:8px; margin-top:8px; }
     .cam-retake-row.show { display:flex; }
-
-    /* ── FLIP camera button ── */
     .cam-flip-btn {
       position: absolute; top:10px; right:10px; z-index:10;
       width:36px; height:36px; border-radius:50%;
@@ -295,8 +290,6 @@
     }
     .cam-flip-btn.show { display:flex; }
     .cam-flip-btn:hover { background:rgba(0,0,0,.6); }
-
-    /* ── LIVE section (desktop only) ── */
     .cam-live-section { margin-top:10px; padding:10px 12px; background:rgba(248,250,252,.8); border:1.5px dashed var(--border-s); border-radius:9px; }
     .cam-live-label { font-size:11px; color:var(--text3); margin-bottom:7px; display:flex; align-items:center; gap:5px; }
     .camera-controls { display:flex; gap:8px; flex-wrap:wrap; }
@@ -306,8 +299,6 @@
     .cam-guide.show { display:block; }
     .cam-guide ol { margin-top:5px; padding-left:18px; }
     .cam-guide li { margin-bottom:2px; }
-
-    /* ── HTTPS warning ── */
     .cam-https-warn { background:rgba(255,202,40,.1); border:1.5px solid rgba(255,202,40,.4); border-radius:9px; padding:10px 13px; margin-top:8px; font-size:12px; color:#F57F17; display:none; }
     .cam-https-warn.show { display:flex; gap:8px; align-items:flex-start; }
 
@@ -647,22 +638,17 @@
           <div class="step-item"><div class="step-circle" id="ciStep3"><i class="fas fa-save"></i></div><div><div class="step-label">บันทึก</div><div class="step-text">ขั้นที่ 3</div></div></div>
         </div>
         <div class="checkin-grid">
-          <!-- CAMERA PANEL -->
           <div class="panel">
             <div class="panel-head"><div class="panel-title"><div class="panel-icon" style="background:var(--teal)"><i class="fas fa-camera"></i></div>ถ่ายรูปเข้างาน</div><span style="font-size:11px;color:var(--text3)">* จำเป็น</span></div>
             <div class="panel-body">
-              <!-- CAMERA WRAP -->
               <div class="camera-wrap" id="camWrapIn">
                 <div class="camera-placeholder" id="camPhIn"><i class="fas fa-camera"></i><p id="camPhInTxt">กดปุ่มถ่ายรูปด้านล่าง</p></div>
                 <video id="camVidIn" class="cam-video" autoplay playsinline muted webkit-playsinline></video>
                 <canvas id="camCanvasIn" style="display:none"></canvas>
                 <img id="camImgIn" class="cam-img" alt="รูปเข้างาน">
                 <div class="cam-live-badge" id="camLiveIn"><div class="cam-live-dot"></div> LIVE</div>
-                <!-- FLIP BUTTON (mobile only, shows when live) -->
                 <button class="cam-flip-btn" id="camFlipIn" onclick="Camera.flipCamera('in')" title="สลับกล้อง"><i class="fas fa-sync-alt"></i></button>
               </div>
-
-              <!-- FILE INPUT (PRIMARY) -->
               <div class="cam-primary-section" id="camPrimaryIn">
                 <input type="file" id="fileIn" accept="image/*" capture="user">
                 <label for="fileIn" class="cam-capture-label teal-grad" id="fileLabelIn">
@@ -674,8 +660,6 @@
                   <span style="font-size:12px;color:var(--green-d);font-weight:600"><i class="fas fa-check-circle"></i> ได้รูปแล้ว</span>
                 </div>
               </div>
-
-              <!-- LIVE CAMERA (desktop) -->
               <div class="cam-live-section" id="camLiveSectionIn">
                 <div class="cam-live-label"><i class="fas fa-video"></i> หรือใช้กล้องสด (Desktop):</div>
                 <div class="camera-controls">
@@ -684,8 +668,6 @@
                   <button class="btn btn-sm btn-gray" onclick="Camera.retake('in')" id="btnRetakeIn" style="display:none"><i class="fas fa-redo"></i> ถ่ายใหม่</button>
                 </div>
               </div>
-
-              <!-- ERROR / GUIDE -->
               <div class="cam-error" id="camErrIn"></div>
               <div class="cam-guide" id="camGuideIn">
                 <strong><i class="fas fa-lightbulb"></i> วิธีอนุญาตกล้อง:</strong>
@@ -697,8 +679,6 @@
               </div>
             </div>
           </div>
-
-          <!-- FORM PANEL -->
           <div class="panel">
             <div class="panel-head"><div class="panel-title"><div class="panel-icon" style="background:var(--green-d)"><i class="fas fa-edit"></i></div>ข้อมูลการเข้างาน</div></div>
             <div class="panel-body" style="display:flex;flex-direction:column;gap:12px">
@@ -897,7 +877,6 @@
 <script src="https://pharmsuitsupport.github.io/WFH/js/camera.js"></script>
 <script src="https://pharmsuitsupport.github.io/WFH/js/api.js"></script>
 <script src="https://pharmsuitsupport.github.io/WFH/js/app.js"></script>
-
 
 </body>
 </html>
