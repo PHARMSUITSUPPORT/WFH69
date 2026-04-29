@@ -1248,12 +1248,8 @@ async function printMonthlyReport() {
     toast('กรุณาโหลดข้อมูลก่อน', 'error');
     return;
   }
-  const logoB64  = await _getLogoBase64();
-  const logoHtml = logoB64
-  ? `<img src="${logoB64}" alt="logo" crossorigin="anonymous"
-          style="height:50px;width:auto;object-fit:contain;display:block;margin:0 auto 10px"
-          onerror="this.style.display='none'">`
-  : '';
+   var logoB64 = await _getLogoBase64();
+  var _logoTag = '<img src="' + logoB64 + '" style="width:60px;height:auto;display:block;margin:0 auto 8px" onerror="this.style.display=\'none\'">';
   _doPrint(
     `<div style="font-family:Sarabun,sans-serif">
        <div style="text-align:center;margin-bottom:16px">${logoHtml}</div>
@@ -1267,6 +1263,7 @@ async function printMonthlyReport() {
    _buildPdfHtml — รับ logoB64 เป็น param
    ════════════════════════════════════════ */
 function _buildPdfHtml(data, dateLabel, logoB64 = null) {
+    var _logo = logoSrc || 'https://lh3.googleusercontent.com/d/1tEuBft9_e3q6Q79o6vHI_HMRaL2hSNB3';
   // ใช้ base64 ถ้ามี, fallback LOGO_URL, ถ้าไม่มีเลยซ่อน
   const logoSrc  = logoB64 || window.LOGO_URL || null;
    const logoHtml = logoSrc
