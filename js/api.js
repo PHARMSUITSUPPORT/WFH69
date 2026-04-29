@@ -1,5 +1,4 @@
-<script>
-  /**
+/**
  * api.js — WFH System API Layer
  * ──────────────────────────────
  * ทุก call ไปยัง Google Apps Script ผ่านที่นี่เท่านั้น
@@ -12,7 +11,7 @@ const API = (() => {
 
   /* ─── CONFIG (แก้ SCRIPT_URL ตรงนี้ที่เดียว) ────────────── */
   const SCRIPT_URL = window.GAS_URL ||
-    'https://script.google.com/macros/s/AKfycbz08qLAI6SWeGzx4IKLnt5c4XABi5MYZWHCmlBsoX36XDIJaY0K7Z0HGvB9V-jY4J2WqA/exec'; // นำลิงก์ URL มาใส่นะครับ
+    'https://script.google.com/macros/s/AKfycbz08qLAI6SWeGzx4IKLnt5c4XABi5MYZWHCmlBsoX36XDIJaY0K7Z0HGvB9V-jY4J2WqA/exec';
 
   /* ─── Simple in-memory cache (TTL = 2 min) ──────────────── */
   const _cache = new Map();
@@ -41,7 +40,7 @@ const API = (() => {
       try {
         const res = await fetch(SCRIPT_URL, {
           method:  'POST',
-          headers: { 'Content-Type': 'text/plain' },  // GAS ต้องการ text/plain (ไม่ block CORS)
+          headers: { 'Content-Type': 'text/plain' },
           body:    JSON.stringify(payload),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -111,4 +110,3 @@ const API = (() => {
   /* ─── Public ─────────────────────────────────────────────── */
   return { auth, system, attendance, dashboard, users, leave, files, invalidate, clearAll };
 })();
-</script>
